@@ -5,7 +5,7 @@ name: Python application
 
 on:
   schedule:
-    - cron: "* */6 * * *"  # Every 4 hours at :02 minutes (00:03, 04:03, etc.)
+    - cron: "0 */6 * * *"  # Every 4 hours at :02 minutes (00:03, 04:03, etc.)
   workflow_dispatch:
 
 permissions:
