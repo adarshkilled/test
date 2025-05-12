@@ -1,0 +1,90 @@
+import pandas as pd
+import numpy as np
+import requests
+import time
+from datetime import datetime, timedelta
+
+def fetch_candles():
+    end_time = int(time.time())
+    start_time = end_time - 2000 * 60  # Fetch ~2000 1m candles
+    url = "https://api.delta.exchange/v2/history/candles"
+    params = {
+        "symbol": "BTCUSDT",
+        "resolution": "1m",
+        "start": start_time,
+        "end": end_time
+    }
+    response = requests.get(url, params=params)
+    data = response.json()['result']
+
+    df = pd.DataFrame(data)
+    df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
+    df["time"] = df["time"].dt.tz_convert("Asia/Kolkata")
+    df.set_index('time', inplace=True)
+    df = df[['high', 'low', 'close']].astype(float)
+    df = df.sort_values("time")
+    return df
+
+def calculate_rma(series, period):
+    rma = [np.nan] * len(series)
+    rma[period - 1] = np.mean(series.iloc[:period])
+    alpha = 1 / period
+    for i in range(period, len(series)):
+        rma[i] = alpha * series.iloc[i] + (1 - alpha) * rma[i - 1]
+    return pd.Series(rma, index=series.index)
+
+
+def calculate_supertrend(df, period=10, multiplier=3):
+    df = df.copy()
+    hl2 = (df['high'] + df['low']) / 2
+    tr = pd.concat([
+        df['high'] - df['low'],
+        (df['high'] - df['close'].shift()).abs(),
+        (df['low'] - df['close'].shift()).abs()
+    ], axis=1).max(axis=1)
+
+    atr = calculate_rma(tr, period)
+
+    upperband = hl2 + multiplier * atr
+    lowerband = hl2 - multiplier * atr
+
+    supertrend = [np.nan] * len(df)
+    direction = [0] * len(df)
+
+    for i in range(period, len(df)):
+        prev_upper = upperband.iloc[i - 1]
+        prev_lower = lowerband.iloc[i - 1]
+        prev_supertrend = supertrend[i - 1]
+        close_prev = df['close'].iloc[i - 1]
+
+        # Band continuation logic
+        if lowerband.iloc[i] < prev_lower and close_prev > prev_lower:
+            lowerband.iloc[i] = prev_lower
+        if upperband.iloc[i] > prev_upper and close_prev < prev_upper:
+            upperband.iloc[i] = prev_upper
+
+
+        # Trend direction logic
+        if np.isnan(prev_supertrend):
+            direction[i] = -1  # Assume down at first
+        elif prev_supertrend == prev_upper:
+            direction[i] = -1 if df['close'].iloc[i] > upperband.iloc[i] else 1
+        else:
+            direction[i] = 1 if df['close'].iloc[i] < lowerband.iloc[i] else -1
+
+        supertrend[i] = lowerband.iloc[i] if direction[i] == -1 else upperband.iloc[i]
+
+    df['SuperTrend'] = supertrend
+    df['Direction'] = direction
+    return df
+
+def run_live_supertrend():
+    while True:
+        df = fetch_candles()
+        df = calculate_supertrend(df, period=16, multiplier=1.5)
+        last_row = df.iloc[-1]
+        print(f"{last_row.name} | Close: {last_row['close']:.2f} | SuperTrend: {last_row['SuperTrend']:.2f} | Trend: {'Up' if last_row['Direction'] == -1 else 'Down'}")
+        time.sleep(60)
+
+# Uncomment to run
+run_live_supertrend()
